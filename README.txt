@@ -1,3 +1,7 @@
+# Project-2
+Machine learning mini projects\
+View PDF for main document.
+
 ### Project 2: Predictive Analysis in R
 
 - Task: Predicting heart failure survival rates and bike share rentals per hour.
