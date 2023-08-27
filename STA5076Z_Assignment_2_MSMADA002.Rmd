@@ -1,0 +1,927 @@
+---
+title: "STA5076Z Supervised Learning Assignment 2"
+author: "Adam Mosam (MSMADA002)"
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output:
+  bookdown::pdf_document2
+---
+
+```{r setup, include=FALSE}
+library(knitr)
+library(flextable)
+library(corrplot)
+library(ggplot2)
+library(dplyr)
+library(magrittr)
+library(tidyverse)
+library(pROC)
+library(doParallel)
+library(caret)
+library(caTools)
+library(glmnet)
+library(tree)
+library(ROCR)
+library(caret)
+library(mltools)
+library(gridExtra)
+library(gbm)
+library(randomForest)
+
+setwd('C:/Users/AM2706813/OneDrive - Surbana Jurong Private Limited/Desktop/UCT 2023/STA5076Z/Assignments/Assignment 2/R2')
+knitr::opts_chunk$set(echo = F, message = F, include = T, warning=F)
+```
+
+\newpage
+# Introduction
+
+In this assignment, supervised learning techniques will be explored and used to predict the following quantities:
+
+* Question 1: Survival rate of patients with heart failure - using data set from Chicco and Jurman (2009),
+* Question 2: Bike share rentals per hour - using data set from Sathishkumar, Par and Cho (2020). 
+
+The datasets will be analysed and tested with various models which will include:
+
+1. Logistic regression and classification trees in Question 1,
+2. Random forests, gradient boosted trees and extreme boosting in Question 2. 
+
+The aim of this exercise is to gain a deeper understanding of the different modelling techniques and how they can be applied to real-world problems.
+
+# Question 1
+In this question, medical records of 299 patients will be analysed. The dataset includes the following features:
+
+* age: age of the patient (years)
+* anaemia: decrease of red blood cells or hemoglobin (boolean)
+* high blood pressure: if the patient has hypertension (boolean)
+* creatinine phosphokinase (CPK): level of the CPK enzyme in the blood (mcg/L)
+* diabetes: if the patient has diabetes (boolean)
+* ejection fraction: percentage of blood leaving the heart at each contraction (percentage)
+* platelets: platelets in the blood (kiloplatelets/mL)
+* sex: woman or man (binary)
+* serum creatinine: level of serum creatinine in the blood (mg/dL)
+* serum sodium: level of serum sodium in the blood (mEq/L)
+* smoking: if the patient smokes or not (boolean)
+* time: follow-up period (days)
+* death event (target): if the patient deceased during the follow-up period (boolean)
+
+
+The data includes 12 independent variables and a single response variable represented by death_event.
+
+As "anaemia", "diabetes", "high_blood_pressure", "sex", "smoking", "DEATH_EVENT" are categorical, they have been changed to factor variables. 
+
+## Part (a & b)
+The data will be split into training and test sets, using a 80/20 split, respectively.
+Two models will be evaluated in this question, namely, a logistic regression model and a classification tree model. Both models will be run with the default settings. The following indicators will be used to measure the effectiveness of the model; classification accuracy, recall, specificity, F1 score, ROC AUC, and Matthews Correlation Coefficient (MCC). The results are shown below in Table \@ref(tab:tab1). 
+
+```{r q1a, echo= FALSE, tab.cap="Indicators from logistic regression model and decission trees with default settings" , tab.id='tab1', label='tab1'}
+
+#function for formatting tables
+FitFlextableToPage <- function(ft, pgwidth = 6){
+  ft_out <- ft %>% autofit() # Autofit the table
+  ft_out <- width(ft_out, width = dim(ft_out)$widths*pgwidth/(flextable_dim(ft_out)$widths)) # Adjust the width
+  return(ft_out)
+}
+#import dataset
+df <- read.csv("heart_failure_clinical_records_dataset.csv")
+
+#convert to factor
+col_fac <- c("anaemia", "diabetes", "high_blood_pressure", "sex", "smoking", "DEATH_EVENT")
+df[col_fac] <- lapply(df[col_fac], factor)
+
+#set seed
+set.seed(100) 
+
+#define function produce indicators 
+perf_measures <- function(pred, cm) {
+  res <- c()
+  
+  # Calculate the performance metrics
+  perf <- performance(pred, measure = "tpr", x.measure = "fpr")
+  auc <- performance(pred, measure = "auc")@y.values[[1]]
+  
+  accuracy <- sum(diag(cm))/sum(cm)
+  recall <- cm[2,2]/sum(cm[,2])
+  precision <- cm[2,2]/sum(cm[2,])
+  specificity <- cm[1,1]/sum(cm[,1])
+  f1 <- 2 * (precision * recall) / (precision + recall)
+  mcc <- (cm[2,2]*cm[1,1]-cm[2,1]*cm[1,2])/sqrt((cm[2,2]+cm[2,1])*(cm[2,2]+cm[1,2])*(cm[1,1]+cm[2,1])*(cm[1,1]+cm[1,2]))
+  
+  res[1] <- accuracy
+  res[2] <- recall
+  res[3] <- specificity
+  res[4] <- f1
+  res[5] <- auc
+  res[6] <- mcc
+  return(res)
+}
+
+#split data
+train_sample <- sample(1:nrow(df), 0.8*nrow(df))
+
+train <- df[train_sample,]
+test <- df[-train_sample,]
+y.test <- df[-train_sample,"DEATH_EVENT"]
+
+response_binary_y <- as.numeric(y.test) - 1
+
+#logistic reg............................................................
+reg1 <- glm(DEATH_EVENT~.,data = train, family = binomial)
+phat_reg1 <- predict(reg1, newdata = test, type = "response")
+yhat_reg1 <- ifelse(phat_reg1 >= 0.5, 1, 0)
+pred_reg1 <- prediction(phat_reg1, response_binary_y)
+
+cm_reg1 <- table(yhat_reg1, response_binary_y)
+res_reg1a <- perf_measures(pred_reg1, cm_reg1)
+
+
+#tree...................................................................
+tree1 <- tree(DEATH_EVENT ~ ., data=train)
+
+phat_tree1 <- predict(tree1, newdata = test, type='vector')[,2]
+yhat_tree1 <- ifelse(phat_tree1 >= 0.5, 1, 0)
+
+
+cm_tree1 <- table(yhat_tree1, response_binary_y)
+
+pred_tree1 <- prediction(phat_tree1, response_binary_y)
+res_tree1a <- perf_measures(pred_tree1, cm_tree1)
+
+rowname <- c("Logistic Regression (Def.)", "Classification Tree (Def.)")
+results1a <- data.frame(rbind(round(res_reg1a,2), round(res_tree1a,2)))
+
+results1a <- data.frame(rowname, results1a)
+colnames(results1a) <- c("Model","Accuracy Rate", "Recall", "specificity", "F1", "ROC AUC", "MCC")
+
+# Create a flextable object from the header data frame
+ft1 <- flextable(results1a)  %>% 
+            align(align = "center", part = "all")
+
+
+FitFlextableToPage(ft1, pgwidth = 6)
+
+```
+The MCC, as shown above for the two models, measure the difference between the actual and predicted values, and is useful when assessing unbalanced data.
+
+```{r q1a2, echo= FALSE, tab.cap="Classes of response variable" , tab.id='tab2', label='tab2'}
+tab <- table(df$DEATH_EVENT)
+
+t2 <- data.frame(tab[1],tab[2] )
+
+colnames(t2) <- c("Not Deceased", "Deceased")
+
+ft2 <- flextable(t2) %>% 
+            align(align = "center", part = "all")
+
+FitFlextableToPage(ft2, pgwidth = 3)
+```
+
+Looking at the observation count for the predictor "death_event", the data appears heavily unbalanced. Hence, the MCC in this case is an important indicator. The equation for MCC is given below
+
+$$
+MCC = \frac{(TP \times TN) - (FP \times FN)}{\sqrt{(TP + FP) \times (TP + FN) \times (TN + FP) \times (TN + FN)}}
+$$
+With $TP$ and $TN$ being the true positive rate (recall) and true negative rate (specificity), respectively. $FP$ and $FN$ represent the false positive rate and false negative rate, respectively. As with most correlation coefficients, the MCC ranges between -1 and 1, where
+
+* 1 represents perfect agreement between the actual and predicted values
+* 0 indicates complete randomness between results, and
+* -1 indicates perfect disagreement of results. 
+
+In the results of the two models, the MCC appears close to 1, with values above 0.5. This indicates that the models have perfromed well on the dataset. 
+
+## Part (c)
+In this question, the two models discussed in part (a & b) will be run 100 times on randomly partitioned training and test sets, with the mean of the indicators then extracted. These results may be viewed in Table \@ref(tab:tab3)  
+
+```{r q1c, echo= FALSE, tab.cap="Mean indicators from logistic regression model and decission trees with default settings, from 100 samples" , tab.id='tab3', label='tab3'}
+seed <- seq(from = 201, to = 300, by = 1)
+
+res_reg1 <- matrix(0, nrow = 100, ncol = 6)
+res_tree1 <- matrix(0, nrow = 100, ncol = 6)
+res_lasso1 <- matrix(0, nrow = 100, ncol = 6)
+res_pr_tree1 <- matrix(0, nrow = 100, ncol = 6)
+
+
+for (i in 1:100) {
+set.seed(seed[i]) 
+#split data
+train_sample <- sample(1:nrow(df), 0.8*nrow(df))
+
+train <- df[train_sample,]
+test <- df[-train_sample,]
+y.test <- df[-train_sample,"DEATH_EVENT"]
+
+response_binary_y <- as.numeric(y.test) - 1
+
+#logistic reg............................................................
+reg1 <- glm(DEATH_EVENT~.,data = train, family = binomial)
+
+phat_reg1 <- predict(reg1, newdata = test, type = "response")
+yhat_reg1 <- ifelse(phat_reg1 >= 0.5, 1, 0)
+pred_reg1 <- prediction(phat_reg1, response_binary_y)
+
+cm_reg1 <- table(yhat_reg1, response_binary_y)
+res_reg1[i,] <- perf_measures(pred_reg1, cm_reg1)
+
+
+#tree...................................................................
+tree1 <- tree(DEATH_EVENT ~ ., data=train)
+summary(tree1)
+phat_tree1 <- predict(tree1, newdata = test, type='vector')[,2]
+yhat_tree1 <- ifelse(phat_tree1 >= 0.5, 1, 0)
+
+
+cm_tree1 <- table(yhat_tree1, response_binary_y)
+
+pred_tree1 <- prediction(phat_tree1, response_binary_y)
+res_tree1[i,] <- perf_measures(pred_tree1, cm_tree1)
+
+
+#lasso....................................................................
+X <- model.matrix(DEATH_EVENT ~ ., data = train)[,-1]
+Y <- train[,"DEATH_EVENT"]
+
+Xtest <- model.matrix(DEATH_EVENT ~ ., data = test)[,-1]
+
+cv.model <- cv.glmnet(x = X, y = Y, 
+                      family = "binomial", 
+                      type.measure = 'class',
+                      alpha = 1)                       #alpha=1 is lasso
+
+l.min <- cv.model$lambda.min
+
+lasso1 <- glmnet(X, Y,
+                 family = "binomial", 
+                 alpha = 1)
+
+phat_lasso1 <- predict(lasso1, s = l.min ,newx = Xtest, type = "response")
+yhat_lasso1 <- ifelse(phat_lasso1 >= 0.5, 1, 0)
+pred_lasso1 <- prediction(phat_lasso1, response_binary_y)
+
+cm_lasso1 <- table(yhat_lasso1, response_binary_y)
+
+res_lasso1[i,] <- perf_measures(pred_lasso1, cm_lasso1)
+
+
+#pruned tree
+tree1b <- tree(DEATH_EVENT ~ ., data=train,split = "gini", control = tree.control(nrow(train), mindev = 0.001))
+
+
+cv_tree <- cv.tree(tree1b, FUN = prune.misclass)
+
+pr_tree1b <- prune.misclass(tree1b, best = cv_tree$size[which.min(cv_tree$dev)])
+
+phat_pr_tree1 <- predict(pr_tree1b, newdata = test, type='vector')[,2]
+yhat_pr_tree1 <- ifelse(phat_pr_tree1 >= 0.5, 1, 0)
+
+
+cm_pr_tree1 <- table(yhat_pr_tree1, response_binary_y)
+
+pred_pr_tree1 <- prediction(phat_pr_tree1, response_binary_y)
+res_pr_tree1[i,] <- perf_measures(pred_pr_tree1, cm_pr_tree1)
+}
+
+res1b <- rbind(colMeans(res_reg1),
+      colMeans(res_tree1))
+
+rowname <- c("Logistic Regression (Def.)", "Classification Tree (Def.)")
+res1b <- data.frame(rowname, round(res1b,2))
+colnames(res1b) <- c("Model","Accuracy Rate", "Recall", "specificity", "F1", "ROC AUC", "MCC")
+
+ft3 <- flextable(res1b) %>% 
+            align(align = "center", part = "all")
+
+FitFlextableToPage(ft3, pgwidth = 6)
+```
+Boxplots of each of the indicators for both models are shown in Figure \@ref(fig:fig1). The box plots reveal that the majority of the performance indicators follow a normal distribution, with a slight skew observed in the F1 scores for both models. Notably, the recall and MCC exhibit larger variances compared to the other metrics, highlighting the significance of performing multiple simulations using random samples to obtain reliable estimates.
+
+```{r q1c2, echo= FALSE, fig.cap="Boxplot of indicators results with 100 samples" , fig.id='fig1', label='fig1',fig.align='center',fig.height = 4, fig.width = 6}
+bp1b1 <- res_reg1
+colnames(bp1b1) <- c("Acc. Rate", "Recall", "Specificity", "F1", "ROC AUC", "MCC")
+bp1b2 <- res_tree1
+colnames(bp1b2) <- c("Acc. Rate", "Recall", "Specificity", "F1", "ROC AUC", "MCC")
+par(mfrow = c(1, 2))
+boxplot(bp1b1, main = "Logistic regression (Default)", cex.main = 0.8, las = 2, cex.axis = 0.8)
+boxplot(bp1b2, main = "Classification Tree (Default)", cex.main = 0.8, las = 2, cex.axis = 0.8)
+```
+
+## Part (d)
+In the context of classification trees, the ROC curve represents the relationship between the true positive rate (TPR or recall) and the false positive rate (FPR), by varying the classification threshold.
+
+Given a set of predictor variables for a single observation, the classification tree algorithm uses the tree structure established from the training data to determine the outcome. The observation is assigned to a terminal node based on the conditions in the tree, and the probability of belonging to a class is estimated as the proportion of training samples that belong to that class within the terminal node.
+
+To create an ROC curve, the classification threshold is varied, which adjusts the balance between the TPR and FPR. For each threshold, the tree is used to classify the observations and the resulting TPR and FPR values are used to plot a point on the ROC curve.
+
+An example of ROC curves from Part (c) are shown in Figure \@ref(fig:fig2) for the logistic regression model and the classification tree. 
+
+```{r q1d, echo= FALSE, fig.cap="ROC curve using logistic regression model (default) and decission tree (default)" , fig.id='fig2', label='fig2',fig.align='center',fig.height = 4, fig.width = 6}
+perf_reg1 <- performance(pred_reg1, "tpr", "fpr")
+perf_tree1 <- performance(pred_tree1, "tpr", "fpr")
+
+par(mfrow = c(1, 2))
+plot(perf_reg1, main = "Logistic Regression (Default)",cex.main = 0.8, las = 2, cex.axis = 0.8)
+plot(perf_tree1, main = "Classification Tree (Default)", cex.main = 0.8, las = 2, cex.axis = 0.8)
+
+```
+
+## Part (e)
+In this question, we will extend the models presented in Part (a & b) by applying L1 regularization (Lasso) to the logistic regression model, and by pruning and modifying the splitting criterion of the classification tree.
+
+To determine the optimal hyperparameter $\lambda$ for the logistic regression model with L1 regularization, we will use cross-validation with 10 folds to minimize the missclassification rate in the model presented. Similarly, we will use cross-validation to determine the optimal tree size for the classification tree through cost complexity pruning, by minimizing the deviance. Additionally, we will modify the splitting criterion used to grow the trees from the default option (deviance) to the gini index.
+
+The results from all four models are shown below
+
+```{r q1e, echo= FALSE, tab.cap="Indicators from logistic regression model (default and with L1 regularization) and desicssion tress (default and pruned tree)" , tab.id='tab4', label='tab4'}
+res1c <- rbind(colMeans(res_reg1),
+      colMeans(res_tree1),
+      colMeans(res_lasso1),
+      colMeans(res_pr_tree1))
+rowname <- c("Logistic Regression (Def.)", "Classification Tree (Def.)", 
+             "Logistic Regression (L1)", "Classification Tree (Pruned)")
+res1c <- data.frame(rowname, round(res1c,3))
+colnames(res1c) <- c("Model", "Accuracy Rate", "Recall", "specificity", "F1", "ROC AUC", "MCC")
+
+ft4 <- flextable(res1c) %>% 
+            align(align = "center", part = "all")
+
+FitFlextableToPage(ft4, pgwidth = 6)
+
+```
+
+As shown, the MCC from the adjusted models outperform the models run with the default settings, indicating an improved performance as a result of the parameter tuning. From all the results, the logistic regression model with L1 regularisation appeared to perfrom the best, based on the MCC score. 
+
+Chicco and Jurman (2020) investigated various machine learning models to predict the survival rate of patients with heart disease, and tested these models on the same dataset used in this study. The data in the aforementioned study however, was subject to feature engineering, and involved two main datasets. The first dataset excluded the "Time" feature, which represents the time interval between the follow up. The second dataset included the original dataset, with the "Time" response variable. 
+
+The results presented below are based on the dataset without the response variable Time. As shown in Table \@ref(tab:tab5), the results do not compare well with those shown earlier in Table \@ref(tab:tab4). This is however due the models being simulated on different datasets.  
+
+```{r q1e2, echo= FALSE, tab.cap="Table 4 results from Chicco and Jurman (2020), from logistic regression model (default and with L1 regularization) and desicssion tress (default and pruned tree)" , tab.id='tab5', label='tab5'}
+cj4_DT <- c(0.376, 0.554, 0.737, 0.532, 0.831,  0.681)
+cj4_LR <- c(0.332, 0.475, 0.730, 0.394, 0.892, 0.643)
+cj4 <- rbind(cj4_LR, cj4_DT)
+
+cj_name <- rbind("Decision Tress", "Logistic Regression")
+
+cj4 <- cbind(cj_name, cj4)
+order_list <- c(1, 4, 5,6,3,7,2)
+cj4 <- data.frame(cj4[,order_list])
+colnames(cj4) <- c("Model", "Accuracy Rate", "Recall", "specificity", "F1", "ROC AUC", "MCC")
+
+ft5 <- flextable(cj4) %>% 
+            align(align = "center", part = "all")
+
+FitFlextableToPage(ft5, pgwidth = 6)
+
+```
+
+Chicco and Jurman (2020) discuss the impact of the Time response variable, and attribute greater model performance with its inclusion in the dataset. The results in Table \@ref(tab:tab6) are extracted from Chicco and Jurman (2020), and include results using a logistic regression model only. To this table, the results from the logistic regression model with L1 regularization, computed in this study are added. Ina addition, the percent difference in results are also provided.  
+
+```{r q1e4, echo= FALSE, tab.cap="Table 11 results from Chicco and Jurman (2020), and results from this study, using logistic regression model" , tab.id='tab6', label='tab6'}
+order_list <- c(3, 4,5,2,6,1)
+cj11 <- c(0.607, 0.714, 0.833, 0.780, 0.856 ,0.818)
+
+cj11 <-cj11[order_list]
+perc11 <- 100- round(100*(cj11 / as.numeric(as.matrix(res1c[3,-1]))),0)
+
+cj11 <- rbind(cj11, round( as.numeric(as.matrix(res1c[3,-1])),3), perc11)
+
+cj_name <- c("Chicco & Jurman (2020)", "This study", "Percent Difference (%)")
+
+cj11 <- cbind(cj_name, cj11)
+
+cj11 <- data.frame(cj11)
+colnames(cj11) <- c("Model", "Accuracy Rate", "Recall", "specificity", "F1", "ROC AUC", "MCC")
+
+ft6 <- flextable(cj11) %>% 
+            align(align = "center", part = "all")
+
+FitFlextableToPage(ft6, pgwidth = 6)
+```
+
+As shown, the results appear to correspond well with those from Chicco and Jurman (2020), thus highlighting the significance of the Time response variable. 
+
+# Question 2
+In this question, the goal is to predict the number of bicycle share rentals per hour over using data collected over the course of one year in Seoul, South Korea, as provided in (Sathishkumar et al, 2020). The dataset includes the following features:
+
+* Rented bike count (target): Count of bikes rented at each hour
+* Date: year-month-day
+* Hour: Hour of the day
+* Temperature: Degrees Celsius
+* Humidity: %
+* Windspeed: m/s
+* Visibility: 10m
+* Dew point temperature: Degrees Celsius
+* Solar radiation: MJ/m2
+* Rainfall: mm
+* Snowfall: cm
+* Season: Winter, Spring, Summer, Autumn
+* Holiday: Holiday/No holiday
+* Functional Day: NoFunc(Non Functional Hours), Fun(Functional hours)
+
+
+The data includes 13 independent variables and a single response variable represented by Rented Bike Count.
+
+As "Seasons", "Holiday" and "Functioning Day" are categorical, they have been changed to factor variables. 
+
+## Part (a)
+The histogram of the response variable Rented Bike Count, is shown below
+
+```{r cars, echo=FALSE, message = FALSE,fig.align='center',fig.height = 3, fig.width = 4,fig.height = 4, fig.width = 6, fig.cap="Histogram of response variable distribution"}
+# Read the data from a CSV file
+df <- read.csv("SeoulBikeData.csv", check.names = FALSE)
+col_fac <- c("Seasons", "Holiday", "Functioning Day")
+df[col_fac] <- lapply(df[col_fac], factor)
+df$Date <- as.Date(df$Date, format = "%d/%m/%Y")
+
+colnames(df)[c(4, 5, 6, 7, 8, 9, 10, 11)] <- c("Temperature", "Humidity", "Wind speed", "Visibility", "Dew point temperature", "Solar Radiation", "Rainfall", "Snowfall")
+
+
+colnames(df) <- gsub(" ", "_", colnames(df))
+
+hist(df$Rented_Bike_Count, main = "", xlab = "Rented Bike Count")
+
+```
+
+It is evident that the distribution of the plot is not normal and exhibits a right-skewed property. However, this may not be a major concern in the subsequent analysis as random trees and other ensemble methods that will be utilized in this section are known to be robust in handling skewed data. However, if a normal distribution is required, transformations of the response variable such as log or square root transformations may be applied.
+
+Scatterplots of the response against various predictors are shown in the following sections. The first group of plots show the relationship of the predictor with the "Hour", "Holiday" and "Functioning day". 
+
+```{r cars2, echo=FALSE, message = FALSE,fig.align='center',fig.height = 3, fig.width = 6, fig.cap="Scatter plot of Rented Bike Count against Hour, Holiday and Functioning day"}
+# Compute mean values for each level of Holiday
+df_meanH <- aggregate(Rented_Bike_Count ~ Holiday, df, mean)
+df_meanF <- aggregate(Rented_Bike_Count ~ Functioning_Day, df, mean)
+
+# Create three plots
+p1 <- ggplot(df, aes(x = Hour, y = Rented_Bike_Count)) +
+  geom_point() +
+  geom_smooth()  +
+  theme(panel.background = element_blank(), 
+        plot.background = element_blank(),
+        axis.title = element_text(size = 8)) # Remove grey background
+
+p2 <- ggplot(df, aes(x = Holiday, y = Rented_Bike_Count)) +
+  geom_point() +
+  scale_x_discrete(labels = levels(df$Holiday)) +
+  geom_smooth() +
+  geom_point(data = df_meanH, aes(x = Holiday, y = Rented_Bike_Count), size = 5, color = "blue")  +
+  theme(panel.background = element_blank(), 
+        plot.background = element_blank(),
+        axis.title = element_text(size = 8)) # Remove grey background
+
+p3 <- ggplot(df, aes(x = Functioning_Day, y = Rented_Bike_Count)) +
+  geom_point() +
+  scale_x_discrete(labels = levels(df$Functioning_Day)) +
+  geom_smooth() +
+  geom_point(data = df_meanF, aes(x = Functioning_Day, y = Rented_Bike_Count), size = 5, color = "blue")  +
+  theme(panel.background = element_blank(), 
+        plot.background = element_blank(),
+        axis.title = element_text(size = 8)) # Remove grey background
+
+# Arrange the three plots in a grid
+grid.arrange(p1, p2, p3, nrow = 1)
+```
+
+The scatter plot for the Hour feature displays two distinct spikes, as revealed by the best-fit curve. These spikes coincide with 8am and 6pm, indicating a high demand for bike rentals during these times. Furthermore, the scatter plots for the categorical features Holiday and Functioning day reveal that non-holidays and functioning days have the highest bike rental rates. There is a clear relationship between these findings, suggesting that the majority of bike rental demand is likely from commuters traveling to and from work, which explains the concentration of rentals at 8am and 6pm.
+
+The next group of scatter plots are intended on highlighting the affect of the weather on the bike rental demand. For this group, the features Snowfall, Rainfall, Wind speed and Visibility are shown.  
+
+```{r pressure, echo=FALSE, message = FALSE,fig.align='center',fig.height = 3, fig.width = 6, fig.cap="Scatter plot of Rented Bike Count against Snowfall, Rainfall and Visibility"}
+# Create three plots
+p1 <- ggplot(df, aes(x = Snowfall, y = Rented_Bike_Count)) +
+  geom_point() +
+  geom_smooth() +
+  theme(panel.background = element_blank(), 
+        plot.background = element_blank(),
+        axis.title = element_text(size = 8)) # Remove grey background
+
+p2 <- ggplot(df, aes(x = Rainfall, y = Rented_Bike_Count)) +
+  geom_point() +
+  geom_smooth() +
+  theme(panel.background = element_blank(), 
+        plot.background = element_blank(),
+        axis.title = element_text(size = 8)) # Remove grey background
+
+p3 <- ggplot(df, aes(x = Wind_speed, y = Rented_Bike_Count)) +
+  geom_point() +
+  geom_smooth() +
+  theme(panel.background = element_blank(), 
+        plot.background = element_blank(),
+        axis.title = element_text(size = 8)) # Remove grey background
+
+p4 <- ggplot(df, aes(x = Visibility, y = Rented_Bike_Count)) +
+  geom_point() +
+  geom_smooth() +
+  theme(panel.background = element_blank(), 
+        plot.background = element_blank(),
+        axis.title = element_text(size = 8)) # Remove grey background
+
+# Arrange the three plots in a grid
+grid.arrange(p1, p2, p3, p4, nrow = 2)
+  
+```
+
+The Snowfall and Rainfall plots indicate that there are numerous observations concentrated near zero with a high bike rental count. As precipitation levels increase, the number of bike rentals drops to a constant plateau. The high level of bike rentals when there is no precipitation could indicate bike rentals from leisure bike riders, with even a small amount of precipitation enough to deter them. The constant plateau of bike rentals could represent those who still need to ride regardless of the weather due to work obligations. However, the low plateau could also be attributed to laborers opting for alternative modes of transportation such as the bus when the weather conditions are poor. 
+
+A linear relationship between visibility and the number of bike rentals can be observed, with the rental count increasing from zero at low visibility levels and then plateauing. While this suggests that bike rentals increase with higher visibility levels up to a certain point, it could also be influenced by the time of day, as the Hours plot indicates lower bike rentals during the night or early morning hours.
+
+The wind speed is shown to have little influence on the bike rental counts, with a roughly constant bike count shown for varying wind speeds. 
+
+The impact of temperature and humidity on bike rental counts will be explored next using the features of Temperature, Humidity, Dew point temperature, and Solar Radiation. Temperature is found to have the strongest relationship with bike rentals, with higher bike counts observed on warmer days. This finding may indicate that people are more likely to rent bikes when the weather is pleasant. Additionally, the effect of humidity on bike rentals is positive, but with low bike counts recorded for very high humidity levels. This could be explained by the fact that high humidity may coincide with precipitation, making it less favorable for biking. It's worth noting that the combination of temperature and humidity can also influence bike rental counts, as extreme combinations of hot and humid conditions may discourage biking altogether. Lastly, Solar Radiation has a weak positive correlation with bike rental counts, meaning that bike rentals may be slightly higher on days with more sunshine.
+
+```{r pressure2, echo=FALSE, message = FALSE,fig.align='center',fig.height = 3, fig.width = 6, fig.cap="Scatter plot of Rented Bike Count against Temperature, Humidity, Dew Point Temperature and Solar Radiation"}
+ # Create three plots
+  p1 <- ggplot(df, aes(x = Temperature, y = Rented_Bike_Count)) +
+    geom_point() +
+    geom_smooth()  +
+  theme(panel.background = element_blank(), 
+        plot.background = element_blank(),
+        axis.title = element_text(size = 8)) # Remove grey background
+  
+  p2 <- ggplot(df, aes(x = Humidity, y = Rented_Bike_Count)) +
+    geom_point() +
+    geom_smooth()  +
+  theme(panel.background = element_blank(), 
+        plot.background = element_blank(),
+        axis.title = element_text(size = 8)) # Remove grey background
+  
+  p3 <- ggplot(df, aes(x = Dew_point_temperature, y = Rented_Bike_Count)) +
+    geom_point() +
+    geom_smooth()  +
+  theme(panel.background = element_blank(), 
+        plot.background = element_blank(),
+        axis.title = element_text(size = 8)) # Remove grey background
+  
+  p4 <- ggplot(df, aes(x = Solar_Radiation, y = Rented_Bike_Count)) +
+    geom_point() +
+    geom_smooth()  +
+  theme(panel.background = element_blank(), 
+        plot.background = element_blank(),
+        axis.title = element_text(size = 8)) # Remove grey background
+  
+  # Arrange the three plots in a grid
+  grid.arrange(p1, p2, p3, p4, nrow = 2)
+  
+```
+
+Finally, the plots for Seasons and Date are examined to investigate the variation in bike rentals across the four seasons and months of the year. A plot of temperature against the date is also shown. The earlier insights suggest that bike rentals are more in demand during the warmer months of spring and summer, while fewer rentals are observed during the colder months of winter. The Seasons plot confirms this observation, with the highest bike rentals in the summer, followed by spring and autumn. Winter has the lowest rental count.
+
+Similarly, the Date plot shows a higher number of bike rentals from May to October, with a sharp drop in rental counts during December to March This could be due to the seasonal weather patterns and holidays, with winter being colder and the holiday season leading to a decrease in work commuting. Overall, the Seasons and Date plots provide additional evidence for the trend of higher bike rentals during warmer months and a seasonal variation in demand for bike rentals.
+
+```{r pressure3, echo=FALSE, message = FALSE,fig.align='center',fig.height = 3, fig.width = 6, fig.cap="Scatter plot of Rented Bike Count against Date and Seasons, and Date against and Temperature"}
+  # Compute mean values for each level of Seasons
+  df_meanS <- aggregate(Rented_Bike_Count ~ Seasons, df, mean)
+  # Create three plots
+  p1 <- ggplot(df, aes(x = Date, y = Rented_Bike_Count)) +
+    geom_point() +
+    geom_smooth()  +
+  theme(panel.background = element_blank(), 
+        plot.background = element_blank(),
+        axis.title = element_text(size = 8)) # Remove grey background
+  
+  p2 <- ggplot(df, aes(x = Seasons, y = Rented_Bike_Count)) +
+    geom_point() +
+    scale_x_discrete(labels = levels(df$Seasons)) +
+    geom_smooth() +
+    geom_point(data = df_meanS, aes(x = Seasons, y = Rented_Bike_Count), size = 5, color = "blue")  +
+  theme(panel.background = element_blank(), 
+        plot.background = element_blank(),
+        axis.title = element_text(size = 8)) # Remove grey background
+  
+  p3 <- ggplot(df, aes(x = Date, y = Temperature)) +
+    geom_point() +
+    geom_smooth()  +
+  theme(panel.background = element_blank(), 
+        plot.background = element_blank(),
+        axis.title = element_text(size = 8)) # Remove grey background
+  
+  # Arrange the three plots in a grid
+  grid.arrange(p1, p2, p3, nrow = 2, ncol = 2)
+  
+```
+
+## Part (b)
+
+This question will demonstrate the process of building three models, namely:
+
+* Random forest: using the *ranger* function.
+* Gradient boosted trees: using *gbm* function. 
+* Extreme boosted trees: using *xgbTrees* function. 
+
+All three functions used are part of the *Caret* package. The tuning of hyperparameters and the assessment of performance on the respective dataset will be described in the sections to follow.
+
+In addition, it should be noted that the Date variable, is converted to a numeric data type. This is done for compatibility reasons with respect to some of the functions used in this section. It should be noted that this change does not influence the results.
+
+An 80/20 split is used for the training and test sets, respectively. 
+
+```{r 2b1, echo=FALSE, message = FALSE}
+
+df$Date <- as.numeric(df$Date)
+```
+
+### Random forests
+
+The tuning parameters for the *ranger* function are as follows:
+
+* *mtry* specifies the number of variables to consider at each split in the tree. A larger number of variables considered at a split will lead to more complex trees with less variables resulting in simpler trees. For this example, we consider the whole list of variables (2 to 13 variables). 
+* *min.node.size* specifies the minimum number of samples allowed at a node, with smaller values producing deeper trees. In order to determine a good range of values, we consider values of 1, 5 and 20.
+* *splitrule* is the splitting criterion, with *variance* adopted as applicable for regression problems. 
+
+Additional parameters which will be tested are the number of trees to consider during training. To determine an optimal set of trees, the *randomForests* function is used. 250 trees are considered, with the variation in the out of bag RMSE produced as follows
+
+```{r 2b2, echo=FALSE, message = FALSE}
+set.seed(100)
+
+#split data........................................................................
+train_sample <- sample(1:nrow(df), 0.8*nrow(df))
+
+train <- df[train_sample,]
+test <- df[-train_sample,]
+ytest <- df[-train_sample,"Rented_Bike_Count"]
+  
+
+```
+
+```{r 2b3, echo=FALSE, message = FALSE}
+## Random Forest....................................................................
+
+#code hashed out for speed. Results imported as shown below
+
+# rf <- randomForest(Rented_Bike_Count ~ ., data = train,
+#                    ntree = 250, 
+#                    importance = TRUE, 
+#                    na.action = na.exclude,
+#                    do.trace = 25)
+
+ load("rf.RData")
+## Predictions
+rf_pred <- predict(rf, newdata = test)
+
+## Prediction accuracy
+rf_rmse <- sqrt(mean((ytest - rf_pred)^2))
+
+```
+
+```{r 2b4, echo=FALSE, message = FALSE, fig.cap = "Training RMSE against number of trees using randomTrees", fig.align='center',fig.height = 3, fig.width = 5, fig.id='fb1', label='fb1'}
+
+## Plot Accuracy
+plot(sqrt(rf$mse), type = 'l', xlab = 'Number of trees', ylab = 'RMSE', 
+     col = 'blue', lwd = 2, ylim = c(100, max(sqrt(rf$mse))), cex.lab = 0.7, cex.axis = 0.7)
+abline(h = rf_rmse, col = 'blue', lty = 2, lwd = 2)
+legend('bottom', legend = c('Random Forest OOB', "Testing RMSE's"), 
+       col=c('blue', 'black'), lwd = 2, lty = c('solid', 'dashed'), cex = 0.5)
+
+
+```
+
+As shown, the RMSE appears to converge at the minimum at approximately 100 trees, which suggests that 250 trees is sufficient. To summarize, the hyperparameter inputs for the *ranger* grid search are as follows:
+
+* *mtry*: 2 to 13
+* *min.node.size*: 1, 5 and 20
+* *splitrule*: variance
+
+```{r 2b5, echo=FALSE, message = FALSE, include = FALSE, warning = FALSE}
+#random forest with hyperparameter grid search tuning.....................................
+
+# Create combinations of hyperparameters
+rf_grid <- expand.grid(mtry = 2:13,
+                       splitrule = 'variance',
+                       min.node.size = c(1, 5, 20)) 
+
+ctrl <- trainControl(method = 'oob', verboseIter = T)
+
+# Use ranger
+rf_gridsearch <- train(Rented_Bike_Count ~ ., 
+                       data = train,
+                       method = 'ranger',
+                       num.trees = 250,
+                       verbose = T,
+                       importance = 'impurity',
+                       trControl = ctrl,
+                       tuneGrid = rf_grid) 
+#optimal model
+rf_gridsearch$finalModel 
+
+#predict
+rf_grid_pred <- predict(rf_gridsearch, newdata = test)
+
+#caLc RMSE
+rf_grid_rmse <- sqrt(mean((ytest - rf_grid_pred)^2))
+
+```
+
+After running the training model, the optimal model was found to include the following hyperparameters:
+
+* *mtry*: `r rf_gridsearch$finalModel$mtry`
+* *min.node.size*: `r rf_gridsearch$finalModel$min.node.size`
+
+### Gradient boosted trees
+
+The tuning parameters for the *gbm* function are as follows:
+
+* *interaction.depth*  Specifies the depth of each tree. This model will include a interaction depths ranging from 1, 5, 10 and 15.  
+* *shrinkage* is the shrinkage or learning rate and controls the contribution of each tree in the final model. A low shrinkage value improves the model and avoids overfitting but at the cost of computing time. In this study, shrinkage values of 0.01 and 0.1 are adopted and viewed as a good range of values. 
+* *n.trees* specifies the number of trees to consider. This model will consider 1000, 5000 and 10000 trees. 
+* *n.minobsinnode* is the minimum terminal node size, as defined in the previous section. A value of 1 chosen. 
+
+5 fold cross validation is used to determine the optimal hyperparameters. 
+
+```{r 2b6, echo=FALSE, message = FALSE, include = FALSE, warning = FALSE}
+#GBM.....................................................................................
+
+# Set up parameter grid for tuning
+gbm_grid <- expand.grid(interaction.depth = c( 1, 5, 10, 15),
+                        shrinkage = c(0.1, 0.01),
+                        n.trees = c(1000, 5000, 10000),
+                        n.minobsinnode = 1)
+
+# Set up cross-validation control object
+ctrl <- trainControl(method = "cv", 
+                     number = 5,
+                     verboseIter = TRUE,
+                     allowParallel = TRUE)
+
+# Fit gbm model to grid....................CODE HASHED OUT DUE TO LARGE COMPUTING TIME
+# gbm <- train(Rented_Bike_Count ~ .,
+#                    data = train,
+#                    method = "gbm",
+#                    trControl = ctrl,
+#                    tuneGrid = gbm_grid,
+#                    verbose = FALSE)
+
+#Load saved gbm data
+load("gbm.RData") 
+
+# Get the best hyperparameters
+best_params <- gbm$bestTune
+
+# Train final model using best hyperparameters.. ...................CODE HASHED OUT DUE TO LARGE COMPUTING TIME
+# gbm_final <- gbm(Rented_Bike_Count ~ .,
+#                  data = train,
+#                  distribution = "gaussian",
+#                  n.trees = best_params$n.trees,
+#                  interaction.depth = best_params$interaction.depth,
+#                  shrinkage = best_params$shrinkage,
+#                  bag.fraction = 1)
+
+#Load saved gbm data
+load("gbm_final.RData")
+
+#predict
+gbm_pred <- predict.gbm(gbm_final, newdata = test, n.trees = best_params$n.trees)
+
+#caLc RMSE
+gbm_rmse <- sqrt(mean((ytest - gbm_pred)^2))
+
+```
+
+After running the training model, the optimal model was found to include the following hyperparameters:
+
+* *interaction.depth*: `r best_params$interaction.depth` 
+* *shrinkage*: `r best_params$shrinkage`
+* *n.trees*: `r best_params$n.trees` 
+
+
+### Extreme boosted trees
+
+The tuning parameters for the *xgbTrees* function are as follows:
+
+* *nrounds* is the number of boosting rounds or iterations to perform and controls the number of trees used in the model. 
+* *eta* is the learning or shrinkage rate. 
+* *max_depth* specifies the maximum depth of each tree. 
+* *gamma* is the the minimum loss reduction required to split a leaf node. A larger value of gamma will result in fewer and more conservative splits. This model considers a value of 0.001 for *gamma*.
+* *colsample_bytree* is the fraction of columns to be randomly sampled for each tree. A value of 1 is chosen for this parameter.   
+* *min_child_weight* is the he minimum sum of instance weight needed in a child. A value of 1 is chosen for this parameter. 
+* *subsample* represents the fraction of instances to be randomly sampled for each tree. A value of 1 is chosen for this parameter. 
+
+For *nrounds*, *eta* and *max_depths*, the values used for gradient boosted trees are applied.  In addition, 5 fold cross-validation is used to determine the optimal model.
+
+```{r 2b7, echo=FALSE, message = FALSE, include = FALSE, warning = FALSE}
+#GBM.....................................................................................
+
+# Set up parameter grid for tuning
+xgb_grid <- expand.grid(nrounds = c(1000, 5000, 10000),
+                        max_depth = c(1, 5, 10, 15),
+                        eta = c(0.1, 0.01),
+                        gamma = 0.001,
+                        colsample_bytree = 1,
+                        min_child_weight = 1,
+                        subsample = 1)
+
+# Set up cross-validation control object
+ctrl <- trainControl(method = "cv", 
+                     number = 5,
+                     verboseIter = TRUE,
+                     allowParallel = TRUE)
+
+# Fit xgb model to grid....................CODE HASHED OUT DUE TO LARGE COMPUTING TIME
+# xgb <- train(Rented_Bike_Count ~ .,
+#                    data = train,
+#                    method = "xgbTree",
+#                    trControl = ctrl,
+#                    tuneGrid = xgb_grid,
+#                    verbose = FALSE)
+
+#Load saved xgb data
+load("xgb.RData") 
+
+#predict
+xgb_pred <- predict(xgb, test)
+
+#caLc RMSE
+xgb_rmse <- sqrt(mean((ytest - xgb_pred)^2))
+
+```
+
+After running the training model, the optimal model was found to include the following hyperparameters:
+
+* *nrounds*: `r xgb$bestTune$nrounds` 
+* *eta*: `r xgb$bestTune$eta` 
+* *max_depth*: `r xgb$bestTune$max_depth` 
+
+### RMSE results
+
+The RMSE results from all three models are shown below
+
+```{r 2b8, echo=FALSE,tab.cap="Test set RMSE result, and the standard deviation of the test set target values" , tab.id='tabf', label='tabf'}
+
+rmse_r <- round(cbind(sd(ytest), rf_grid_rmse, gbm_rmse, xgb_rmse),2)
+colnames(rmse_r) <- c("Sigma", "Random Forest", "Gradiant Boost Tree", "Extreme Boosted Tree")
+rmse_r <- data.frame(rmse_r)
+
+
+
+ftf <- flextable(rmse_r) %>% 
+            align(align = "center", part = "all")
+
+FitFlextableToPage(ftf, pgwidth = 5)
+
+
+```
+To evaluate the performance of the models used in this section, it's useful to compare the Root Mean Square Error (RMSE) metric to the standard deviation of the target values.
+
+Comparing the RMSE values produced by the various models to the standard deviation reveals that the models are performing well. Specifically, the RMSE values are approximately one third of the standard deviation, which suggests that the models are accurately capturing the variability of the target values and making reliable predictions. The gradient boost tree appears to have performed the best, having reached the lowest RMSE value. 
+
+## Part (c)
+
+The variable importance plot is shown below. 
+
+```{r 2b8, echo=FALSE,fig.cap="Variable importance barchart" , fig.id='figf', label='figf', fig.align='center',fig.height = 7, fig.width = 6, fig.align='center'}
+
+xgb_imp <- (varImp(xgb))
+gbm_imp <- (varImp(gbm))
+rf_imp <- (varImp(rf_gridsearch))
+
+dv <-data.frame(xgb_imp$importance)
+dv2 <-data.frame(gbm_imp$importance)
+dv3 <-data.frame(rf_imp$importance)
+
+cdv <- data.frame(dv[order(row.names(dv), decreasing = FALSE), ])
+cdv2 <- data.frame(dv2[order(row.names(dv2), decreasing = FALSE), ])
+cdv3 <- data.frame(dv3[order(row.names(dv3), decreasing = FALSE), ])
+
+
+
+cdv$names <- (row.names(dv)[order(row.names(dv))])
+cdv$group <- "XGB"
+colnames(cdv) <- c("imp", "name", "grp")
+cdv <- cdv[order(as.matrix(cdv)[,1], decreasing = TRUE),]
+
+cdv2$names <- (row.names(dv)[order(row.names(dv))])
+cdv2$group <- "GBM"
+colnames(cdv2) <- c("imp", "name", "grp")
+cdv2 <- cdv2[order(as.matrix(cdv2)[,1], decreasing = TRUE),]
+
+cdv3$names <- (row.names(dv)[order(row.names(dv))])
+cdv3$group <- "RF"
+colnames(cdv3) <- c("imp", "name", "grp")
+cdv3 <- cdv3[order(as.matrix(cdv3)[,1], decreasing = TRUE),]
+
+
+dp2 <- data.frame(matrix(ncol = 3, nrow = 45))
+for (i in seq(from = 0, to = 14, by = 1)) {
+   a <- i*3+1
+   b <- i*3+2
+   c <- i*3+3
+   
+  dp2[a,] <- cdv[i+1, ]
+  dp2[b,] <- cdv2[i+1, ]
+  dp2[c,] <- cdv3[i+1, ]
+  
+}
+
+colnames(dp2) <- c("imp", "name", "grp")
+
+ggplot(dp2, aes(x = imp, y = reorder(name, imp), fill = grp)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(x = "Variable Importance", y = NULL) +
+  theme(panel.background = element_blank(), 
+        plot.background = element_blank())
+
+```
+From the variable importance plot, it is evident that similar results are produced across all three models. To sum up, the results from the variable importance plot and the previous analysis provide compelling evidence that Hour and Temperature are the key features in forecasting bike rental demand. The Hour feature displays distinct spikes during peak commuting times, whereas Temperature has a strong positive association with rental counts, indicating that favorable weather conditions lead to higher rentals. Moreover, the importance of other variables, such as Humidity, Solar Radiation, and Functioning day, aligns with the earlier findings, supporting their impact on rental counts. In essence, the better the weather and working conditions, the higher the bike rentals, highlighting the importance of these features in predicting bike rental demand.  
+
+\newpage
+# References  {-}
+
+Chicco, D. and G. Jurman (2020). “Machine learning can predict survival of patients with heart failure from serum creatinine and ejection fraction alone”. In: BMC Medical Informatics and Decision Making 20 (16). issn: 1472-6947. url: https://doi.org/10.1186/s12911-020-1023-5.
+
+Sathishkumar, V. E., Jangwoo Park, and Yongyun Cho (2020). “Using data mining techniques for bike sharing demand prediction in metropolitan city”. In: Computer Communications 153, pp. 353–366. issn: 0140-3664. doi: https://doi.org/10.1016/j.comcom.2020.02.007. url: https://www.sciencedirect.com/science/article/pii/S0140366419318997.
+
+
+

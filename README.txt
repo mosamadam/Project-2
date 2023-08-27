@@ -1,0 +1,2 @@
+File contains .RData files, which are saved results from previously run models. It was done this way due to the extremely long simulation 
+times (3+ hours). The code used to compute those results are however shown in the RMD file (but are hashed out). 
